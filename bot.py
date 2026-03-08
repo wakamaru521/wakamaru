@@ -2,10 +2,9 @@ import discord
 from discord import app_commands
 from discord.ui import View, Button
 import sqlite3
+import os
 import random
 import datetime
-import asyncio
-import os
 
 TOKEN = os.getenv("TOKEN")
 
@@ -13,38 +12,19 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# =========================
-# DATABASE
-# =========================
-
 conn = sqlite3.connect("players.db")
 c = conn.cursor()
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS players(
 user_id INTEGER PRIMARY KEY,
-discord_name TEXT,
-switch_name TEXT,
-friend_code TEXT,
-casual_rate INTEGER,
-lounge12 INTEGER,
-lounge24 INTEGER,
-memo TEXT
+name TEXT,
+rate INTEGER
 )
 """)
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS rate_history(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-user_id INTEGER,
-lounge12 INTEGER,
-lounge24 INTEGER,
-date TEXT
-)
-""")
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS tournament_results(
+CREATE TABLE IF NOT EXISTS results(
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 user_id INTEGER,
 points INTEGER,
@@ -55,90 +35,9 @@ date TEXT
 conn.commit()
 
 participants=[]
-current_teams=[]
+teams=[]
 
-# =========================
-# PROFILE
-# =========================
-
-@tree.command(
-name="profile",
-description="プレイヤープロフィールを登録または更新します"
-)
-@app_commands.describe(
-switch_name="Switchのユーザー名",
-friend_code="フレンドコード",
-casual_rate="野良レート",
-lounge12="Lounge12レート",
-lounge24="Lounge24レート",
-memo="メモ（任意）"
-)
-async def profile(
-interaction:discord.Interaction,
-switch_name:str,
-friend_code:str,
-casual_rate:int,
-lounge12:int,
-lounge24:int,
-memo:str="なし"
-):
-
-    c.execute("REPLACE INTO players VALUES(?,?,?,?,?,?,?,?)",
-    (interaction.user.id,
-     interaction.user.name,
-     switch_name,
-     friend_code,
-     casual_rate,
-     lounge12,
-     lounge24,
-     memo))
-
-    conn.commit()
-
-    await interaction.response.send_message("プロフィール登録完了")
-
-# =========================
-# SHOW PROFILE
-# =========================
-
-@tree.command(
-name="show",
-description="プロフィールを表示します"
-)
-@app_commands.describe(
-user="表示するユーザー"
-)
-async def show(
-interaction:discord.Interaction,
-user:discord.Member=None
-):
-
-    if user is None:
-        user=interaction.user
-
-    c.execute("SELECT * FROM players WHERE user_id=?",(user.id,))
-    data=c.fetchone()
-
-    if not data:
-        await interaction.response.send_message("未登録です")
-        return
-
-    embed=discord.Embed(
-    title=f"{data[1]} のプロフィール",
-    color=discord.Color.blue())
-
-    embed.add_field(name="Switch名",value=data[2],inline=False)
-    embed.add_field(name="FC",value=data[3])
-    embed.add_field(name="野良レート",value=data[4])
-    embed.add_field(name="Lounge12",value=data[5])
-    embed.add_field(name="Lounge24",value=data[6])
-    embed.add_field(name="メモ",value=data[7],inline=False)
-
-    await interaction.response.send_message(embed=embed)
-
-# =========================
-# CHECKIN UI
-# =========================
+# UI
 
 class CheckinView(View):
 
@@ -153,8 +52,7 @@ class CheckinView(View):
 
         await interaction.response.send_message(
         "参加登録しました",
-        ephemeral=True
-        )
+        ephemeral=True)
 
     @discord.ui.button(label="キャンセル",style=discord.ButtonStyle.red)
     async def leave(self,interaction,button):
@@ -164,48 +62,61 @@ class CheckinView(View):
 
         await interaction.response.send_message(
         "参加をキャンセルしました",
-        ephemeral=True
-        )
+        ephemeral=True)
 
-# =========================
-# OPEN CHECKIN
-# =========================
+# checkin
 
 @tree.command(
 name="checkin_open",
-description="大会参加ボタンを表示します"
+description="大会参加ボタンを表示"
 )
 async def checkin_open(interaction:discord.Interaction):
 
     view=CheckinView()
 
     await interaction.response.send_message(
-    "大会参加はこちら",
-    view=view
-    )
+    "参加はこちら",
+    view=view)
 
-# =========================
-# TEAM BALANCE
-# =========================
+# profile
 
-def create_balanced_teams(team_count):
+@tree.command(
+name="profile",
+description="レート登録"
+)
+@app_commands.describe(
+rate="プレイヤーレート"
+)
+async def profile(interaction:discord.Interaction,rate:int):
 
-    players=[]
+    c.execute(
+    "REPLACE INTO players VALUES(?,?,?)",
+    (interaction.user.id,interaction.user.name,rate))
+
+    conn.commit()
+
+    await interaction.response.send_message("登録完了")
+
+# team balance
+
+def make_teams(team_count):
+
+    plist=[]
 
     for uid in participants:
 
-        c.execute("SELECT lounge12,discord_name FROM players WHERE user_id=?",(uid,))
+        c.execute("SELECT name,rate FROM players WHERE user_id=?",(uid,))
         data=c.fetchone()
 
         if data:
-            players.append((uid,data[1],data[0]))
+            plist.append((uid,data[0],data[1]))
 
-    players.sort(key=lambda x:x[2],reverse=True)
+    plist.sort(key=lambda x:x[2],reverse=True)
 
     teams=[[] for _ in range(team_count)]
     scores=[0]*team_count
 
-    for p in players:
+    for p in plist:
 
         idx=scores.index(min(scores))
         teams[idx].append(p)
@@ -213,91 +124,53 @@ def create_balanced_teams(team_count):
 
     return teams
 
-# =========================
-# TOURNAMENT CREATE
-# =========================
+# tournament
 
 @tree.command(
 name="tournament",
-description="大会チームを自動生成します"
+description="大会チーム生成"
 )
 @app_commands.describe(
 teams="チーム数"
 )
-async def tournament(
-interaction:discord.Interaction,
-teams:int
-):
+async def tournament(interaction:discord.Interaction,teams:int):
 
-    global current_teams
+    global teams
 
-    if len(participants)<teams:
+    if len(participants)==0:
 
-        await interaction.response.send_message("人数不足")
+        await interaction.response.send_message("参加者なし")
         return
 
-    current_teams=create_balanced_teams(teams)
+    teams=make_teams(teams)
 
     embed=discord.Embed(
     title="大会チーム",
-    color=discord.Color.red()
-    )
+    color=discord.Color.red())
 
-    for i,team in enumerate(current_teams):
+    for i,t in enumerate(teams):
 
         txt=""
 
-        for uid,name,rate in team:
-
+        for uid,name,rate in t:
             txt+=f"<@{uid}> ({rate})\n"
 
         embed.add_field(
         name=f"Team{i+1}",
         value=txt,
-        inline=False
-        )
+        inline=False)
 
     await interaction.response.send_message(embed=embed)
 
-# =========================
-# SHUFFLE
-# =========================
-
-@tree.command(
-name="shuffle",
-description="チームをシャッフルします"
-)
-async def shuffle(interaction:discord.Interaction):
-
-    global current_teams
-
-    flat=[p for team in current_teams for p in team]
-
-    random.shuffle(flat)
-
-    size=len(current_teams)
-
-    teams=[[] for _ in range(size)]
-
-    for i,p in enumerate(flat):
-
-        teams[i%size].append(p)
-
-    current_teams=teams
-
-    await interaction.response.send_message("シャッフル完了")
-
-# =========================
-# RESULT
-# =========================
+# result
 
 @tree.command(
 name="result",
-description="大会結果ポイントを登録"
+description="大会ポイント登録"
 )
 @app_commands.describe(
 user="プレイヤー",
-points="獲得ポイント"
+points="ポイント"
 )
 async def result(
 interaction:discord.Interaction,
@@ -306,33 +179,30 @@ points:int
 ):
 
     c.execute(
-    "INSERT INTO tournament_results VALUES(NULL,?,?,?)",
+    "INSERT INTO results VALUES(NULL,?,?,?)",
     (user.id,points,str(datetime.date.today()))
     )
 
     conn.commit()
 
-    await interaction.response.send_message("結果登録完了")
+    await interaction.response.send_message("結果登録")
 
-# =========================
-# RANKING
-# =========================
+# ranking
 
 @tree.command(
-name="tournament_rank",
-description="大会ランキング表示"
+name="ranking",
+description="大会ランキング"
 )
-async def tournament_rank(interaction:discord.Interaction):
+async def ranking(interaction:discord.Interaction):
 
     c.execute("""
-    SELECT players.discord_name,
-    SUM(tournament_results.points)
-    FROM tournament_results
+    SELECT players.name,
+    SUM(results.points)
+    FROM results
     JOIN players
-    ON players.user_id=tournament_results.user_id
-    GROUP BY tournament_results.user_id
+    ON players.user_id=results.user_id
+    GROUP BY results.user_id
     ORDER BY SUM(points) DESC
-    LIMIT 10
     """)
 
     data=c.fetchall()
@@ -346,62 +216,26 @@ async def tournament_rank(interaction:discord.Interaction):
     embed=discord.Embed(
     title="大会ランキング",
     description=txt,
-    color=discord.Color.gold()
-    )
+    color=discord.Color.gold())
 
     await interaction.response.send_message(embed=embed)
 
-# =========================
-# RATE HISTORY
-# =========================
-
-@tree.command(
-name="rate_history",
-description="レート履歴表示"
-)
-@app_commands.describe(
-user="プレイヤー"
-)
-async def rate_history(
-interaction:discord.Interaction,
-user:discord.Member
-):
-
-    c.execute(
-    "SELECT lounge12,lounge24,date FROM rate_history WHERE user_id=?",
-    (user.id,)
-    )
-
-    data=c.fetchall()
-
-    txt=""
-
-    for r in data:
-
-        txt+=f"{r[2]} 12:{r[0]} 24:{r[1]}\n"
-
-    embed=discord.Embed(
-    title="レート履歴",
-    description=txt
-    )
-
-    await interaction.response.send_message(embed=embed)
-
-# =========================
-# SYNC
-# =========================
+# sync
 
 @tree.command(
 name="sync",
-description="スラッシュコマンド同期"
+description="コマンド同期（管理者用）"
 )
 async def sync(interaction:discord.Interaction):
 
+    if not interaction.user.guild_permissions.administrator:
+
+        await interaction.response.send_message("管理者のみ")
+        return
+
     await tree.sync()
 
-    await interaction.response.send_message("同期完了")
-
-# =========================
+    await interaction.response.send_message("sync完了")
 
 @client.event
 async def on_ready():
