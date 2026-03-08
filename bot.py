@@ -242,58 +242,58 @@ class TournamentView(discord.ui.View):
 
         teams = make_teams(members)
 
- ブラケット = make_bracket(サン)
+        bracket = make_bracket(teams)
 
- ガァンガァ = 「🏆ガァン\n\n」
+        text = "🏆トーナメント\n\n"
 
- いちゃいちゃ、いちゃいちゃ 列挙い(カワサワ):
+        for i, match in enumerate(bracket):
 
- t1 = 「 」。参加([エム。じょしゃんしゃんしゃん_名割 じょしゃんしゃく m ち 試合[0]])
+            t1 = " , ".join([m.display_name for m in match[0]])
 
- t2 = 「 」。参加([エム。じょしゃんしゃんしゃん_名割 じょしゃんしゃく m ち 試合[1]])
+            t2 = " , ".join([m.display_name for m in match[1]])
 
- ガツガツ += f"マ{i+1}\ん{t1}\nVS\n{t2}\n\n"
+            text += f"Match{i+1}\n{t1}\nVS\n{t2}\n\n"
 
- 得つ 交流。応答。send_サササ(ゆううううう)
+        await interaction.response.send_message(text)
 
 
 # ----------------
 # UI更新
 # ----------------
 
-非同期 def 更水_ガンガン(サン・トゥ・トゥ・):
+async def update_message(message):
 
- 看込す = create_embed(・・・・・。カロン)
+    embed = create_embed(message.guild)
 
- ・・・・ = ウォンテガンロガン()
+    view = TournamentView()
 
- 得つ update_queue。置く((・〜〜〜〜〜))
+    await update_queue.put((message, embed, view))
 
 
 # ----------------
-# みかん
+# コマンド
 # ----------------
 
-@・ガンガンガンガンガン()
-非同期 def 大会(ctx):
+@bot.command()
+async def 大会(ctx):
 
- 看込す = create_embed(ctx。カロン)
+    embed = create_embed(ctx.guild)
 
- ・・・・ = ウォンテガンロガン()
+    view = TournamentView()
 
- 得つ ctx。送信(埋座込き=埋座込き、表示=表示)
+    await ctx.send(embed=embed, view=view)
 
 
 # ----------------
 # 起動
 # ----------------
 
-@〜〜〜〜〜
-非同期 def サ_準備完了():
+@bot.event
+async def on_ready():
 
-    印刷(「工準備完了」)
+    print("BOT READY")
 
- ・・・・。・・・・。create_task(サロン_サロン())
+    bot.loop.create_task(queue_worker())
 
 
-・・・・。看る(よぉ〜ん)
+bot.run(TOKEN)
