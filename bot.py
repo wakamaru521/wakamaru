@@ -4,8 +4,9 @@ from discord.ui import Button, View
 import sqlite3
 import random
 import datetime
+import os
 
-TOKEN = "MTQ3OTc1NDg4MjY3MDkxOTgwNA.G_SPhm.Rph06JqL6NqLCChX4_31qY-yDRJgp8BMXd_KwU"
+TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
@@ -14,10 +15,7 @@ tree = app_commands.CommandTree(client)
 conn = sqlite3.connect("players.db")
 c = conn.cursor()
 
-# =================
 # DB
-# =================
-
 c.execute("""
 CREATE TABLE IF NOT EXISTS players(
 user_id INTEGER PRIMARY KEY,
@@ -46,10 +44,7 @@ conn.commit()
 participants=[]
 current_teams=[]
 
-# =================
-# プロフィール
-# =================
-
+# profile
 @tree.command(name="profile")
 async def profile(interaction:discord.Interaction,
 switch_name:str,
@@ -73,10 +68,7 @@ memo:str="なし"):
 
     await interaction.response.send_message("登録完了")
 
-# =================
 # show
-# =================
-
 @tree.command(name="show")
 async def show(interaction:discord.Interaction,user:discord.Member=None):
 
@@ -103,53 +95,7 @@ async def show(interaction:discord.Interaction,user:discord.Member=None):
 
     await interaction.response.send_message(embed=embed)
 
-# =================
-# レート更新
-# =================
-
-@tree.command(name="update_rate")
-async def update_rate(interaction:discord.Interaction,
-user:discord.Member,
-casual_rate:int=None,
-lounge12:int=None,
-lounge24:int=None):
-
-    if casual_rate:
-        c.execute("UPDATE players SET casual_rate=? WHERE user_id=?",(casual_rate,user.id))
-
-    if lounge12:
-        c.execute("UPDATE players SET lounge12=? WHERE user_id=?",(lounge12,user.id))
-
-    if lounge24:
-        c.execute("UPDATE players SET lounge24=? WHERE user_id=?",(lounge24,user.id))
-
-    c.execute("INSERT INTO rate_history(user_id,lounge12,lounge24,date) VALUES(?,?,?,?)",
-    (user.id,lounge12,lounge24,str(datetime.date.today())))
-
-    conn.commit()
-
-    await interaction.response.send_message("レート更新")
-
-# =================
-# FC
-# =================
-
-@tree.command(name="fc")
-async def fc(interaction:discord.Interaction,user:discord.Member):
-
-    c.execute("SELECT friend_code FROM players WHERE user_id=?",(user.id,))
-    data=c.fetchone()
-
-    if not data:
-        await interaction.response.send_message("未登録")
-        return
-
-    await interaction.response.send_message(data[0])
-
-# =================
-# チェックイン
-# =================
-
+# checkin
 @tree.command(name="checkin")
 async def checkin(interaction:discord.Interaction):
 
@@ -158,10 +104,7 @@ async def checkin(interaction:discord.Interaction):
 
     await interaction.response.send_message("参加登録")
 
-# =================
-# トーナメント
-# =================
-
+# tournament
 @tree.command(name="tournament")
 async def tournament(interaction:discord.Interaction,teams:int):
 
@@ -204,118 +147,17 @@ async def tournament(interaction:discord.Interaction,teams:int):
 
     await interaction.response.send_message(embed=embed)
 
-# =================
-# チームシャッフル
-# =================
+# sync command (手動)
+@tree.command(name="sync")
+async def sync(interaction:discord.Interaction):
 
-@tree.command(name="shuffle_teams")
-async def shuffle_teams(interaction:discord.Interaction):
+    await tree.sync()
 
-    global current_teams
-
-    flat=[p for team in current_teams for p in team]
-
-    random.shuffle(flat)
-
-    size=len(current_teams)
-
-    teams=[[] for _ in range(size)]
-
-    for i,p in enumerate(flat):
-        teams[i%size].append(p)
-
-    current_teams=teams
-
-    await interaction.response.send_message("チームシャッフル完了")
-
-# =================
-# ランキングUI
-# =================
-
-class RankView(View):
-
-    def __init__(self,mode,offset=0):
-
-        super().__init__(timeout=None)
-        self.mode=mode
-        self.offset=offset
-
-    async def update(self,interaction):
-
-        if self.mode=="lounge12":
-            c.execute("SELECT discord_name,lounge12 FROM players ORDER BY lounge12 DESC LIMIT 10 OFFSET ?",(self.offset,))
-            title="Lounge12 Ranking"
-
-        elif self.mode=="lounge24":
-            c.execute("SELECT discord_name,lounge24 FROM players ORDER BY lounge24 DESC LIMIT 10 OFFSET ?",(self.offset,))
-            title="Lounge24 Ranking"
-
-        else:
-            c.execute("SELECT discord_name,casual_rate FROM players ORDER BY casual_rate DESC LIMIT 10 OFFSET ?",(self.offset,))
-            title="Casual Rate Ranking"
-
-        results=c.fetchall()
-
-        txt=""
-
-        for i,(name,rate) in enumerate(results,start=self.offset+1):
-            txt+=f"{i}. {name} - {rate}\n"
-
-        embed=discord.Embed(title=title,description=txt,color=discord.Color.gold())
-
-        await interaction.response.edit_message(embed=embed,view=self)
-
-    @discord.ui.button(label="1-10")
-    async def p1(self,interaction,button):
-        self.offset=0
-        await self.update(interaction)
-
-    @discord.ui.button(label="11-20")
-    async def p2(self,interaction,button):
-        self.offset=10
-        await self.update(interaction)
-
-    @discord.ui.button(label="21-30")
-    async def p3(self,interaction,button):
-        self.offset=20
-        await self.update(interaction)
-
-# =================
-# rank
-# =================
-
-@tree.command(name="rank")
-async def rank(interaction:discord.Interaction,mode:str):
-
-    view=RankView(mode)
-
-    await view.update(interaction)
-
-# =================
-# レート履歴
-# =================
-
-@tree.command(name="rate_history")
-async def rate_history(interaction:discord.Interaction,user:discord.Member):
-
-    c.execute("SELECT lounge12,lounge24,date FROM rate_history WHERE user_id=?",(user.id,))
-    data=c.fetchall()
-
-    txt=""
-
-    for r in data:
-        txt+=f"{r[2]} 12:{r[0]} 24:{r[1]}\n"
-
-    embed=discord.Embed(title="Rate History",description=txt)
-
-    await interaction.response.send_message(embed=embed)
-
-# =================
+    await interaction.response.send_message("コマンド同期完了")
 
 @client.event
 async def on_ready():
 
-    await tree.sync()
-    print("Bot起動")
+    print(f"Bot起動: {client.user}")
 
 client.run(TOKEN)
